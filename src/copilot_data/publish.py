@@ -129,7 +129,10 @@ def upload(file_id: int, token: str, content: bytes) -> dict | None:
                     or parsed.username
                     or parsed.password
                 ):
-                    raise PublishError("下载站上传发生跨站重定向，已停止")
+                    destination = f"{parsed.scheme}://{parsed.hostname}"
+                    if parsed.port is not None:
+                        destination += f":{parsed.port}"
+                    raise PublishError(f"下载站上传重定向目标不符合要求：{destination}")
                 url = location
                 continue
             if status == 409:
