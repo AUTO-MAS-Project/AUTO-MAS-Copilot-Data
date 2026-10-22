@@ -12,6 +12,7 @@ from urllib.parse import quote, urljoin, urlsplit
 import httpx
 
 BASE = "https://data.auto-mas.top"
+UPLOAD_BASE = "https://data2.auto-mas.top"
 MAX_BYTES = 32 * 1024 * 1024
 
 
@@ -56,7 +57,9 @@ async def matches(client: httpx.AsyncClient, url: str, expected: str) -> bool:
 
 
 def upload(file_id: int, token: str, content: bytes) -> dict | None:
-    url = f"{BASE}/api/v1/user/files/{file_id}/versions"
+    upload_path = f"/api/v1/user/files/{file_id}/versions"
+    # 下载站文档推荐境外 runner 直接使用 Cloudflare 入口，避开 EdgeOne 跳转。
+    url = UPLOAD_BASE + upload_path
     with tempfile.TemporaryDirectory(prefix="copilot-publish-") as directory:
         source = Path(directory) / "maa-copilot.json.gz"
         response = Path(directory) / "response.json"
@@ -64,7 +67,7 @@ def upload(file_id: int, token: str, content: bytes) -> dict | None:
         cookies = Path(directory) / "cookies.txt"
         source.write_bytes(content)
         # 复用开服仓库的 curl multipart 传输；凭证仅通过 stdin 传入。
-        # 手动校验同站 307/308，避免 curl 跨站转发认证信息。
+        # 只允许文档确认的数据中心主机及当前文件路径，避免任意跨站转发凭证。
         for _ in range(6):
             command = [
                 "curl",
@@ -125,7 +128,10 @@ def upload(file_id: int, token: str, content: bytes) -> dict | None:
                 parsed = urlsplit(location)
                 if (
                     parsed.scheme != "https"
-                    or parsed.netloc != urlsplit(BASE).netloc
+                    or parsed.hostname
+                    not in {urlsplit(BASE).hostname, urlsplit(UPLOAD_BASE).hostname}
+                    or parsed.port not in {None, 443}
+                    or parsed.path.rstrip("/") != upload_path
                     or parsed.username
                     or parsed.password
                 ):

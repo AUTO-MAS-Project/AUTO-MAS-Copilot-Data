@@ -34,7 +34,7 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 | Variable | `AUTOMAS_FILE_ID` | 目标文件的数字数据库 ID |
 | Variable | `AUTOMAS_PUBLIC_URL` | 不带版本参数的公开下载 URL |
 
-上传接口与维护状态仓库一致：`POST /api/v1/user/files/{file_id}/versions`，Bearer Access Key，multipart 字段 `file` 和 `change_note`。上传文件名为 `maa-copilot.json.gz`。仅向同站 HTTPS 地址发送凭证，不自动重试不确定的上传；已公开的内容一致时跳过重复上传。未审核、未发布、公开回读内容不一致都判定失败。
+上传接口与维护状态仓库一致：`POST /api/v1/user/files/{file_id}/versions`，Bearer Access Key，multipart 字段 `file` 和 `change_note`。上传文件名为 `maa-copilot.json.gz`。根据[下载站文档](https://github.com/AUTO-MAS-Project/AUTO-MAS-data-center-backend/blob/main/docs/API_EXAMPLES.md)，GitHub runner 直接向境外入口 `https://data2.auto-mas.top` 上传，公开地址仍使用 `data.auto-mas.top`。凭证只允许发送到这两个已确认的数据中心 HTTPS 主机、当前文件的上传路径；不自动重试不确定的上传。已公开的内容一致时跳过重复上传，未审核、未发布或公开回读内容不一致都判定失败。
 
 ## 快照协议
 
