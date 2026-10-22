@@ -2,7 +2,10 @@
 
 import asyncio
 import hashlib
+import json
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -52,43 +55,98 @@ async def matches(client: httpx.AsyncClient, url: str, expected: str) -> bool:
         return False
 
 
-async def upload(
-    client: httpx.AsyncClient, file_id: int, token: str, content: bytes
-) -> dict | None:
+def upload(file_id: int, token: str, content: bytes) -> dict | None:
     url = f"{BASE}/api/v1/user/files/{file_id}/versions"
-    # 同站 307/308 可重放表单；不向其他站点转发机器凭证，不重试不确定的 POST。
-    for _ in range(6):
-        response = await client.post(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            files={"file": ("maa-copilot.json.gz", content, "application/gzip")},
-            data={
-                "change_note": f"GitHub Actions run {os.environ.get('GITHUB_RUN_ID', 'manual')}"
-            },
-        )
-        if response.status_code in {307, 308}:
-            location = urljoin(url, response.headers.get("location", ""))
-            parsed = urlsplit(location)
-            if (
-                parsed.scheme != "https"
-                or parsed.netloc != urlsplit(BASE).netloc
-                or parsed.username
-                or parsed.password
-            ):
-                raise PublishError("下载站上传发生跨站重定向，已停止")
-            url = location
-            continue
-        if response.status_code == 409:
-            return None  # 仅随后公开回读一致才将重复内容视为成功。
-        if not 200 <= response.status_code < 300:
-            raise PublishError(f"下载站上传失败（HTTP {response.status_code}）")
-        payload = response.json()
-        if not isinstance(payload, dict) or payload.get("code") != 0:
-            raise PublishError("下载站未确认上传成功")
-        data = payload.get("data")
-        if not isinstance(data, dict) or data.get("id") != file_id:
-            raise PublishError("下载站返回的目标文件不一致")
-        return data
+    with tempfile.TemporaryDirectory(prefix="copilot-publish-") as directory:
+        source = Path(directory) / "maa-copilot.json.gz"
+        response = Path(directory) / "response.json"
+        headers = Path(directory) / "headers.txt"
+        cookies = Path(directory) / "cookies.txt"
+        source.write_bytes(content)
+        # 复用开服仓库的 curl multipart 传输；凭证仅通过 stdin 传入。
+        # 手动校验同站 307/308，避免 curl 跨站转发认证信息。
+        for _ in range(6):
+            command = [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--proto",
+                "=https",
+                "--max-time",
+                "60",
+                "--max-filesize",
+                str(MAX_BYTES),
+                "--request",
+                "POST",
+                "--config",
+                "-",
+                "--form",
+                f"file=@{source};type=application/gzip",
+                "--form-string",
+                f"change_note=GitHub Actions run {os.environ.get('GITHUB_RUN_ID', 'manual')}",
+                "--cookie",
+                str(cookies),
+                "--cookie-jar",
+                str(cookies),
+                "--dump-header",
+                str(headers),
+                "--output",
+                str(response),
+                "--write-out",
+                "%{http_code}",
+                url,
+            ]
+            config = "header = " + json.dumps(f"Authorization: Bearer {token}") + "\n"
+            try:
+                result = subprocess.run(
+                    command,
+                    input=config,
+                    text=True,
+                    capture_output=True,
+                    timeout=65,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                raise PublishError("下载站上传超时，未自动重试") from None
+            status = int(result.stdout) if result.stdout.isdecimal() else 0
+            if status in {307, 308}:
+                location = next(
+                    (
+                        line.partition(":")[2].strip()
+                        for line in headers.read_text().splitlines()
+                        if line.lower().startswith("location:")
+                    ),
+                    "",
+                )
+                if not location:
+                    raise PublishError("下载站重定向缺少目标地址")
+                location = urljoin(url, location)
+                parsed = urlsplit(location)
+                if (
+                    parsed.scheme != "https"
+                    or parsed.netloc != urlsplit(BASE).netloc
+                    or parsed.username
+                    or parsed.password
+                ):
+                    raise PublishError("下载站上传发生跨站重定向，已停止")
+                url = location
+                continue
+            if status == 409:
+                return None  # 仅随后公开回读一致才将重复内容视为成功。
+            if result.returncode or not 200 <= status < 300:
+                raise PublishError(
+                    f"下载站上传失败（curl {result.returncode}，HTTP {status}）"
+                )
+            if response.stat().st_size > MAX_BYTES:
+                raise PublishError("上传响应过大")
+            payload = json.loads(response.read_text(encoding="utf-8-sig"))
+            if not isinstance(payload, dict) or payload.get("code") != 0:
+                raise PublishError("下载站未确认上传成功")
+            data = payload.get("data")
+            if not isinstance(data, dict) or data.get("id") != file_id:
+                raise PublishError("下载站返回的目标文件不一致")
+            return data
     raise PublishError("下载站上传重定向次数过多")
 
 
@@ -102,7 +160,7 @@ async def publish(source: Path) -> None:
         if await matches(client, public_url, expected):
             print("公开下载内容一致，无须重复上传")
             return
-        data = await upload(client, file_id, token, content)
+        data = await asyncio.to_thread(upload, file_id, token, content)
         if data is not None:
             keys = [
                 data.get(key) for key in ("project_key", "category_key", "file_key")

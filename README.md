@@ -49,7 +49,7 @@ MAS 优先下载站，GitHub `data` 分支作为备用，最后可从作业站�
 
 ## 本地生成
 
-需要 Python 3.12+、uv 和 PowerShell 7：
+需要 Python 3.12+、uv 和 PowerShell 7；上传命令还需系统 `curl`（Actions runner 已提供）：
 
 ```powershell
 uv sync --locked
