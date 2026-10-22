@@ -25,6 +25,9 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 先在 `data.auto-mas.top` 的 AUTO-MAS 项目中建立独立快照文件，不覆盖维护状态文件。为该目标配置：
 
+当前目标文件 ID 为 `106`，位于 AUTO-MAS → 客户端支持，固定公开下载地址：
+<https://data.auto-mas.top/api/v1/files/auto-mas/Client/maa-copilot-json-gz/download>。
+
 | 类型 | 名称 | 含义 |
 | --- | --- | --- |
 | Secret | `AUTOMAS_TOKEN` | 有权上传目标文件并自动发布的下载站 Access Key |
