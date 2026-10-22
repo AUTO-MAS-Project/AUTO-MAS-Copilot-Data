@@ -42,6 +42,11 @@ SNAPSHOT_URL = (
 )
 CACHE_TTL = 86400
 PAGE_SIZE = 50
+SNAPSHOT_VERSION = 2
+MODULE_ORDER_URL = (
+    "https://raw.githubusercontent.com/ZOOT-Plus/zoot-plus-frontend/"
+    "dev/src/models/generated/operators.json"
+)
 
 
 def normalize_source(scope: CopilotScope, query: str) -> str:
@@ -51,19 +56,29 @@ def normalize_source(scope: CopilotScope, query: str) -> str:
     query = query.strip()
     if query.isdecimal() and int(query) > 0:
         return str(int(query))
-    if query.startswith("maa://"):
-        match = re.fullmatch(r"maa://(?:set/)?(\d+)", query)
-        if match:
-            return str(int(match[1]))
+    match = re.fullmatch(r"(maa|prts)://(set/|s)?([0-9]+)", query)
+    if match and scope in {"set", "copilot"} and int(match[3]) > 0:
+        scheme, marker, identifier = match.groups()
+        if marker and scope != "set":
+            raise ValueError("这是作业集分享码，请切换到作业集范围")
+        if scheme == "prts" and not marker and scope != "copilot":
+            raise ValueError("这是单份作业分享码，请切换到单个作业范围")
+        return str(int(identifier))
     parsed = urlparse(query)
     if parsed.scheme == "https" and parsed.hostname in {"prts.plus", "www.prts.plus"}:
-        parts = parsed.path.strip("/").split("/")
-        if parts and parts[-1].isdecimal():
-            return str(int(parts[-1]))
-        for key in ("id", "userId", "uploaderId"):
+        # 官网列表通过 op / opset 参数打开详情，也兼容独立详情页和旧链接。
+        keys = {
+            "set": ("opset", "id"),
+            "copilot": ("op", "id"),
+            "author": ("userId", "uploaderId", "id"),
+        }[scope]
+        for key in keys:
             value = parse_qs(parsed.query).get(key, [""])[0]
-            if value.isdecimal():
+            if value.isdecimal() and int(value) > 0:
                 return str(int(value))
+        parts = parsed.path.strip("/").split("/")
+        if parts and parts[-1].isdecimal() and int(parts[-1]) > 0:
+            return str(int(parts[-1]))
     raise ValueError("请输入作业站编号或有效的作业站分享链接")
 
 
@@ -102,9 +117,52 @@ def normalize_assignment(record: dict[str, Any]) -> dict[str, Any]:
         "stage": str(content.get("stage_name") or ""),
         "author": str(record.get("uploader") or ""),
         "authorId": str(record.get("uploader_id") or ""),
+        "type": str(record.get("type") or "PRTS"),
+        "protocolVersion": content.get("version"),
         "opers": slots(content.get("opers")),
         "groups": [slots(g.get("opers")) for g in groups if isinstance(g, dict)],
     }
+
+
+async def attach_module_orders(
+    client: httpx.AsyncClient, assignments: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """v2 模组编号是干员模组列表下标，将官网迁移所用目录随快照保存。"""
+    legacy = [
+        job
+        for job in assignments
+        if job["protocolVersion"] == 2
+        and any(
+            isinstance(slot.get("requirements"), dict)
+            and type(slot["requirements"].get("module")) is int
+            and slot["requirements"]["module"] > 0
+            for slot in job["opers"] + [s for g in job["groups"] for s in g]
+        )
+    ]
+    if not legacy:
+        return assignments
+    response = await client.get(MODULE_ORDER_URL)
+    response.raise_for_status()
+    operators = response.json().get("OPERATORS")
+    if not isinstance(operators, list):
+        raise ValueError("作业站旧版模组目录格式不兼容")
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    for op in operators:
+        if (
+            isinstance(op, dict)
+            and op.get("id")
+            and isinstance(op.get("modules"), list)
+        ):
+            by_name.setdefault(op.get("name", ""), []).append(op)
+    for job in legacy:
+        names = {
+            slot.get("name")
+            for slot in job["opers"] + [s for g in job["groups"] for s in g]
+        }
+        job["moduleOrders"] = {
+            op["id"]: op["modules"] for name in names for op in by_name.get(name, [])
+        }
+    return assignments
 
 
 async def request_data(client: httpx.AsyncClient, path: str, **params: Any) -> Any:
@@ -152,7 +210,9 @@ async def fetch_assignments(
             entries.extend(normalize_assignment(item) for item in data["data"])
             if progress:
                 progress(len(entries), len(ids))
-        return list({item["id"]: item for item in entries}.values())
+        return await attach_module_orders(
+            client, list({item["id"]: item for item in entries}.values())
+        )
     elif scope == "copilot":
         params["copilotIds"] = query
 
@@ -176,12 +236,16 @@ async def fetch_assignments(
         if progress:
             progress(len(entries), total)
         await asyncio.sleep(0.15)
-    return sorted(entries.values(), key=lambda item: item["id"], reverse=True)
+    return await attach_module_orders(
+        client, sorted(entries.values(), key=lambda item: item["id"], reverse=True)
+    )
 
 
 def read_snapshot(content: bytes) -> dict[str, Any]:
     payload = json.loads(gzip.decompress(content))
-    if payload.get("version") != 1 or not isinstance(payload.get("assignments"), list):
+    if payload.get("version") != SNAPSHOT_VERSION or not isinstance(
+        payload.get("assignments"), list
+    ):
         raise ValueError("作业快照格式不兼容，请重新同步")
     if len(payload["assignments"]) != payload.get("count"):
         raise ValueError("作业快照不完整，请重新同步")
@@ -192,7 +256,7 @@ def write_snapshot(
     path: Path, assignments: list[dict[str, Any]], *, updated_at: int | None = None
 ) -> dict[str, Any]:
     payload = {
-        "version": 1,
+        "version": SNAPSHOT_VERSION,
         "updatedAt": int(time.time()) if updated_at is None else updated_at,
         "checkedAt": int(time.time()),
         "count": len(assignments),

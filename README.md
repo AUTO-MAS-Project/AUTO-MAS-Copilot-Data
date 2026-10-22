@@ -40,10 +40,12 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 `data` 分支只包含：
 
-- `maa-copilot.json.gz`：gzip 压缩的 UTF-8 JSON，字段 `version=1`、`updatedAt`（Unix 秒）、`checkedAt`、`count`、`assignments`。
+- `maa-copilot.json.gz`：gzip 压缩的 UTF-8 JSON，字段 `version=2`、`updatedAt`（Unix 秒）、`checkedAt`、`count`、`assignments`。
 - `manifest.json`：协议版本、更新时间、作业数量和 gzip 文件的 SHA-256。
 
-`assignments` 保留 `id`、`title`、`stage`、`author`、`authorId`、`opers`、`groups`。只分析作者实际填写的结构化练度要求，不会把缺失要求补成推荐满练。
+`assignments` 保留 `id`、`title`、`stage`、`author`、`authorId`、`type`、`protocolVersion`、`opers`、`groups`。遇到 v2 作业的模组要求时，从 [ZOOT 官方干员目录](https://github.com/ZOOT-Plus/zoot-plus-frontend/blob/dev/src/models/generated/operators.json) 读取对应干员的模组顺序，并写入 `moduleOrders`；保留原始要求，供 MAS 按作业版本迁移，分析时不再联网读取模组目录。
+
+快照版本与作业协议版本分开记录；旧版 `version=1` 快照缺少作业版本，必须运行 `operation=update` 重新生成，不能通过 `sync` 续传。只分析作者实际填写的结构化练度要求，不会把缺失要求补成推荐满练。
 
 MAS 优先下载站，GitHub `data` 分支作为备用，最后可从作业站完整拉取。作者、作业集和单份作业查询仍使用公开接口。
 

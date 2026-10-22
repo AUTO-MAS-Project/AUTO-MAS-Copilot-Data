@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 
 from .publish import PublishError, publish
-from .source import fetch_assignments, read_snapshot, write_snapshot
+from .source import SNAPSHOT_VERSION, fetch_assignments, read_snapshot, write_snapshot
 
 BRANCH = "refs/heads/data"
 SNAPSHOT = Path("maa-copilot.json.gz")
@@ -29,7 +29,7 @@ def validate() -> dict:
     snapshot = read_snapshot(content)
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     if not snapshot["count"] or manifest != {
-        "version": 1,
+        "version": SNAPSHOT_VERSION,
         "updatedAt": snapshot["updatedAt"],
         "count": snapshot["count"],
         "sha256": hashlib.sha256(content).hexdigest(),
@@ -56,7 +56,9 @@ def load(*, required: bool) -> None:
         path.write_bytes(
             subprocess.check_output(["git", "show", f"{parent}:{path.name}"])
         )
-    validate()
+    # 完整更新只需保留父提交；旧协议快照须重新生成，不能用于 sync 发布。
+    if required:
+        validate()
     PARENT.write_text(parent, encoding="ascii")
 
 
@@ -73,7 +75,7 @@ async def build() -> None:
     # 完整同步成功才续期。每天生成新时间戳，不把旧数据伪装成新同步。
     snapshot = write_snapshot(SNAPSHOT, entries)
     manifest = {
-        "version": 1,
+        "version": SNAPSHOT_VERSION,
         "updatedAt": snapshot["updatedAt"],
         "count": snapshot["count"],
         "sha256": hashlib.sha256(SNAPSHOT.read_bytes()).hexdigest(),
