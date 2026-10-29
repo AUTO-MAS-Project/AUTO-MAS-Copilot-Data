@@ -2,6 +2,8 @@
 
 为 MAS 的作业练度分析生成全站公开快照。覆盖全部公开作者和作业，只保留作业编号、标题、作者、关卡、干员与候选组要求，不保存游戏账号、森空岛凭据、战斗动作或评论。
 
+同时生成一图流完整养成快照 `cultivate_dataset.json`，包含 MAS 已使用的整理后材料数据和干员目录，不包含用户目标、库存或角色练度。
+
 流程参考 [AUTO-MAS-Maintenance](https://github.com/AUTO-MAS-Project/AUTO-MAS-Maintenance)：默认分支维护代码，独立 `data` 分支保留最近成功结果，随后上传 MAS 下载站并回读校验。同步失败不会发布半成品，也不会覆盖上一份完整快照。
 
 ## 手动和每日执行
@@ -21,6 +23,48 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 上传失败时，完整结果仍保留在 `data` 分支。首次运行没有 `data` 分支时必须先执行 `update`。并发运行串行排队，不强推任何分支。
 
+## 一图流养成快照
+
+独立工作流 **Actions → 更新养成快照并上传下载站** 每小时第 **37 分钟**运行，也支持 `operation=update` 和 `operation=sync`。GitHub 定时任务可能排队延迟。两类工作流共用并发组，串行更新 `data` 分支，各自保存时保留另一类快照。
+
+`update` 完整读取干员需求表、掉落矩阵、关卡信息、合成配方和材料信息，按 MAS 的现有规则整理后生成一个 UTF-8 JSON 文件，而不是将五份源文件打包。干员目录从本轮同一份需求表生成；任何源失败、为空或结果缺少完整材料数据/目录时，不生成新快照，也不发布半成品。`sync` 只重传 `data` 分支已保存的完整文件，不修改其生成时间。
+
+`cultivate_dataset.json` 沿用 MAS 本地缓存结构：
+
+| 字段 | 内容 |
+| --- | --- |
+| `saved_at` | 材料数据生成时间，Unix 秒 |
+| `dataset` | `schema_version=2` 的需求、掉落、关卡、配方、材料分类及价值数据 |
+| `operators` | 干员目录，含技能/模组名称、可达档位和原始技能序号 |
+| `operators_saved_at` | 目录生成时间，Unix 秒；与本轮材料数据同时生成 |
+
+配套 `cultivate_manifest.json` 记录协议版本、生成时间、干员数量和 JSON 文件的 SHA-256。两份文件都保存到 `data` 分支；下载站上传的是 **`cultivate_dataset.json` 原文件**，MIME 类型为 `application/json`。
+
+整理规则摘录自 [AUTO-MAS 固定版本的养成数据层](https://github.com/AUTO-MAS-Project/AUTO-MAS/blob/2ac826c8cebad7725e9854b4c70f6c43f24d2712/app/task/MAA/tools/cultivate/yituliu.py)，独立保存在 `src/copilot_data/cultivate_source.py`，保留来源版本与署名。MAS 改变整理规则或快照格式时，应同步此模块并运行契约测试。上游数据来自[明日方舟一图流](https://ark.yituliu.cn)及其[公开数据仓库](https://github.com/Arknights-yituliu/frontend-v2-plus)；本仓库不改变原数据的权利归属。
+
+本仓库负责生成和发布快照；MAS 客户端改为优先下载此文件的逻辑需在主程序仓库另行接入。
+
+### 养成快照的下载站配置
+
+先在下载站 AUTO-MAS → 客户端支持中创建一个**独立养成快照文件**，不要使用作业快照的文件 ID 或地址。配置：
+
+| 类型 | 名称 | 含义 |
+| --- | --- | --- |
+| Secret | `AUTOMAS_TOKEN` | 沿用现有 Access Key，须有权上传并发布新的养成快照文件 |
+| Variable | `AUTOMAS_CULTIVATE_FILE_ID` | 新养成快照文件的数字 ID |
+| Variable | `AUTOMAS_CULTIVATE_PUBLIC_URL` | 新文件固定的 `https://data.auto-mas.top/api/v1/files/.../download` 公开地址 |
+
+工作流将这两个新变量映射为发布工具的 `AUTOMAS_FILE_ID` 和 `AUTOMAS_PUBLIC_URL`，复用上传、发布状态检查和公开回读校验。现有作业快照的三个配置保持原样。未配置新目标时上传步骤失败，完整生成结果仍保留在 `data` 分支，配置后可手动 `sync`。
+
+本地生成及校验（不上传、不推送）：
+
+```powershell
+uv sync --locked
+$env:PYTHONPATH = 'src'
+uv run --no-sync python -m copilot_data build --dataset cultivate
+uv run --no-sync python -m unittest discover -s tests -v
+```
+
 ## 下载站配置
 
 先在 `data.auto-mas.top` 的 AUTO-MAS 项目中建立独立快照文件，不覆盖维护状态文件。为该目标配置：
@@ -38,7 +82,7 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 ## 快照协议
 
-`data` 分支只包含：
+作业快照在 `data` 分支保存：
 
 - `maa-copilot.json.gz`：gzip 压缩的 UTF-8 JSON，字段 `version=2`、`updatedAt`（Unix 秒）、`checkedAt`、`count`、`assignments`。
 - `manifest.json`：协议版本、更新时间、作业数量和 gzip 文件的 SHA-256。

@@ -56,12 +56,17 @@ async def matches(client: httpx.AsyncClient, url: str, expected: str) -> bool:
         return False
 
 
-def upload(file_id: int, token: str, content: bytes) -> dict | None:
+def upload(
+    file_id: int, token: str, content: bytes, *, filename: str = "maa-copilot.json.gz"
+) -> dict | None:
     upload_path = f"/api/v1/user/files/{file_id}/versions"
     # 下载站文档推荐境外 runner 直接使用 Cloudflare 入口，避开 EdgeOne 跳转。
     url = UPLOAD_BASE + upload_path
     with tempfile.TemporaryDirectory(prefix="copilot-publish-") as directory:
-        source = Path(directory) / "maa-copilot.json.gz"
+        source = Path(directory) / filename
+        content_type = (
+            "application/json" if source.suffix == ".json" else "application/gzip"
+        )
         response = Path(directory) / "response.json"
         headers = Path(directory) / "headers.txt"
         cookies = Path(directory) / "cookies.txt"
@@ -85,7 +90,7 @@ def upload(file_id: int, token: str, content: bytes) -> dict | None:
                 "--config",
                 "-",
                 "--form",
-                f"file=@{source};type=application/gzip",
+                f"file=@{source};type={content_type}",
                 "--form-string",
                 f"change_note=GitHub Actions run {os.environ.get('GITHUB_RUN_ID', 'manual')}",
                 "--cookie",
@@ -169,7 +174,9 @@ async def publish(source: Path) -> None:
         if await matches(client, public_url, expected):
             print("公开下载内容一致，无须重复上传")
             return
-        data = await asyncio.to_thread(upload, file_id, token, content)
+        data = await asyncio.to_thread(
+            upload, file_id, token, content, filename=source.name
+        )
         if data is not None:
             keys = [
                 data.get(key) for key in ("project_key", "category_key", "file_key")
