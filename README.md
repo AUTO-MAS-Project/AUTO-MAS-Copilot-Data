@@ -8,7 +8,7 @@
 
 ## 手动和每日执行
 
-每天北京时间 **05:17** 自动完整更新。GitHub 定时任务可能排队延迟。
+作业快照每天北京时间 **03:25** 自动完整更新。GitHub 定时任务可能排队延迟。
 
 打开 **Actions → 更新作业快照并上传下载站 → Run workflow**，选择默认分支 `dev`：
 
@@ -25,7 +25,7 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 ## 一图流养成快照
 
-独立工作流 **Actions → 更新养成快照并上传下载站** 每天北京时间 **05:17** 运行，与作业快照保持一致，也支持 `operation=update` 和 `operation=sync`。GitHub 定时任务可能排队延迟。两类工作流超时均为 **45 分钟**，共用并发组串行更新 `data` 分支，各自保存时保留另一类快照。
+独立工作流 **Actions → 更新养成快照并上传下载站** 每天北京时间 **13:25** 运行，也支持 `operation=update` 和 `operation=sync`。GitHub 定时任务可能排队延迟。两类工作流超时均为 **45 分钟**，共用并发组串行更新 `data` 分支，各自保存时保留另一类快照。
 
 `update` 完整读取干员需求表、掉落矩阵、关卡信息、合成配方和材料信息，按 MAS 的现有规则整理为 UTF-8 JSON，再以 gzip 压缩，而不是将五份源文件打包。干员目录从本轮同一份需求表生成；任何源失败、为空或结果缺少完整材料数据/目录时，不生成新快照，也不发布半成品。`sync` 只重传 `data` 分支已保存的完整压缩文件，不重新压缩、不修改其生成时间。
 
@@ -40,7 +40,7 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 配套 `cultivate_manifest.json` 记录协议版本、生成时间、干员数量和 **gzip 文件**的 SHA-256。两份文件都保存到 `data` 分支；下载站上传的是 **`cultivate_dataset.json.gz` 压缩文件**，MIME 类型为 `application/gzip`。压缩头不记录当前时间，保证同一份 JSON 重复压缩的字节一致。
 
-此前手动发布的明文 JSON v1 须通过一次 `update` 生成并上传 gzip 新版本，之后才能用 `sync` 重传压缩快照。仍使用同一个下载站文件 ID 和固定公开地址，无须新建文件或更改变量；客户端读取时须先解压，再加载其中的 JSON。
+先按下文配置独立的养成文件、密钥和两个变量。已有的明文 JSON v1 养成目标可沿用其文件 ID 和固定公开地址，无须再次手动上传或新建文件；运行一次 `update` 在 `data` 分支生成 gzip 快照并上传新版本，若上传失败，可在配置修复后运行 `sync` 重传已保存的 gzip。客户端读取时须先解压，再加载其中的 JSON。
 
 整理规则摘录自 [AUTO-MAS 固定版本的养成数据层](https://github.com/AUTO-MAS-Project/AUTO-MAS/blob/2ac826c8cebad7725e9854b4c70f6c43f24d2712/app/task/MAA/tools/cultivate/yituliu.py)，独立保存在 `src/copilot_data/cultivate_source.py`，保留来源版本与署名。MAS 改变整理规则或快照格式时，应同步此模块并运行契约测试。上游数据来自[明日方舟一图流](https://ark.yituliu.cn)及其[公开数据仓库](https://github.com/Arknights-yituliu/frontend-v2-plus)；本仓库不改变原数据的权利归属。
 
@@ -52,11 +52,11 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 | 类型 | 名称 | 含义 |
 | --- | --- | --- |
-| Secret | `AUTOMAS_TOKEN` | 沿用现有 Access Key，须有权上传并发布新的养成快照文件 |
+| Secret | `AUTOMAS_CULTIVATE_TOKEN` | 养成快照独立的 Access Key，仅授权上传并自动发布养成快照文件 |
 | Variable | `AUTOMAS_CULTIVATE_FILE_ID` | 新养成快照文件的数字 ID |
 | Variable | `AUTOMAS_CULTIVATE_PUBLIC_URL` | 新文件固定的 `https://data.auto-mas.top/api/v1/files/.../download` 公开地址 |
 
-工作流将这两个新变量映射为发布工具的 `AUTOMAS_FILE_ID` 和 `AUTOMAS_PUBLIC_URL`，复用上传、发布状态检查和公开回读校验。现有作业快照的三个配置保持原样。未配置新目标时上传步骤失败，完整生成结果仍保留在 `data` 分支，配置后可手动 `sync`。
+工作流将独立 Secret 和两个变量映射为发布工具的 `AUTOMAS_TOKEN`、`AUTOMAS_FILE_ID` 和 `AUTOMAS_PUBLIC_URL`，复用上传、发布状态检查和公开回读校验。养成工作流只读取 `AUTOMAS_CULTIVATE_TOKEN`，不回退使用作业快照的 `AUTOMAS_TOKEN`。未配置新目标或独立密钥时上传步骤失败，完整生成结果仍保留在 `data` 分支，配置后可手动 `sync`。
 
 本地生成及校验（不上传、不推送）：
 

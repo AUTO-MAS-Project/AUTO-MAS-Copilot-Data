@@ -2,8 +2,8 @@ name: 更新养成快照并上传下载站
 
 on:
   schedule:
-    # 每天北京时间 05:17，与作业快照一致。
-    - cron: '17 21 * * *'
+    # 每天北京时间 13:25（UTC 05:25）。
+    - cron: '25 5 * * *'
   workflow_dispatch:
     inputs:
       operation:
@@ -71,7 +71,7 @@ jobs:
         run: uv run --no-sync python -m copilot_data save --dataset cultivate
       - name: 上传并回读下载站
         env:
-          AUTOMAS_TOKEN: ${{ secrets.AUTOMAS_TOKEN }}
+          AUTOMAS_TOKEN: ${{ secrets.AUTOMAS_CULTIVATE_TOKEN }}
           AUTOMAS_FILE_ID: ${{ vars.AUTOMAS_CULTIVATE_FILE_ID }}
           AUTOMAS_PUBLIC_URL: ${{ vars.AUTOMAS_CULTIVATE_PUBLIC_URL }}
         run: uv run --no-sync python -m copilot_data publish --dataset cultivate
