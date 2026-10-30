@@ -40,7 +40,7 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 配套 `cultivate_manifest.json` 记录协议版本、生成时间、干员数量和 **gzip 文件**的 SHA-256。两份文件都保存到 `data` 分支；下载站上传的是 **`cultivate_dataset.json.gz` 压缩文件**，MIME 类型为 `application/gzip`。压缩头不记录当前时间，保证同一份 JSON 重复压缩的字节一致。
 
-此前手动发布的明文 JSON v1 须通过一次 `update` 生成并上传 gzip 新版本，之后才能用 `sync` 重传压缩快照。仍使用同一个下载站文件 ID 和固定公开地址，无须新建文件或更改变量；客户端读取时须先解压，再加载其中的 JSON。
+先按下文配置独立的养成文件、密钥和两个变量。已有的明文 JSON v1 养成目标可沿用其文件 ID 和固定公开地址，无须再次手动上传或新建文件；运行一次 `update` 在 `data` 分支生成 gzip 快照并上传新版本，若上传失败，可在配置修复后运行 `sync` 重传已保存的 gzip。客户端读取时须先解压，再加载其中的 JSON。
 
 整理规则摘录自 [AUTO-MAS 固定版本的养成数据层](https://github.com/AUTO-MAS-Project/AUTO-MAS/blob/2ac826c8cebad7725e9854b4c70f6c43f24d2712/app/task/MAA/tools/cultivate/yituliu.py)，独立保存在 `src/copilot_data/cultivate_source.py`，保留来源版本与署名。MAS 改变整理规则或快照格式时，应同步此模块并运行契约测试。上游数据来自[明日方舟一图流](https://ark.yituliu.cn)及其[公开数据仓库](https://github.com/Arknights-yituliu/frontend-v2-plus)；本仓库不改变原数据的权利归属。
 
