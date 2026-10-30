@@ -51,6 +51,8 @@ jobs:
           uv run --no-sync ruff check .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --no-sync ruff format --check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --no-sync python -m unittest discover -s tests -v
       - name: 读取已有完整快照
         env:
           OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'update' }}

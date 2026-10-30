@@ -1,0 +1,77 @@
+name: 更新养成快照并上传下载站
+
+on:
+  schedule:
+    # 每天北京时间 05:17，与作业快照一致。
+    - cron: '17 21 * * *'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 完整更新，或只重试上传已保存的养成快照
+        required: true
+        type: choice
+        default: update
+        options:
+          - update
+          - sync
+
+permissions:
+  contents: read
+
+# 两个工作流都写 data 分支，必须共用并发组串行保存。
+concurrency:
+  group: copilot-snapshot-publisher
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: 安装依赖
+        run: |
+          python -m pip install uv==0.12.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv sync --locked
+      - name: 检查代码与回归测试
+        run: |
+          uv run --no-sync ruff check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --no-sync ruff format --check .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --no-sync python -m unittest discover -s tests -v
+      - name: 读取已有完整养成快照
+        env:
+          OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'update' }}
+        run: |
+          if ($env:OPERATION -eq 'sync') {
+            uv run --no-sync python -m copilot_data load --dataset cultivate --require-existing
+          } else {
+            uv run --no-sync python -m copilot_data load --dataset cultivate
+          }
+      - name: 从一图流完整生成养成快照
+        if: github.event_name != 'workflow_dispatch' || inputs.operation == 'update'
+        run: uv run --no-sync python -m copilot_data build --dataset cultivate
+      - name: 保存到独立 data 分支
+        if: github.event_name != 'workflow_dispatch' || inputs.operation == 'update'
+        run: uv run --no-sync python -m copilot_data save --dataset cultivate
+      - name: 上传并回读下载站
+        env:
+          AUTOMAS_TOKEN: ${{ secrets.AUTOMAS_TOKEN }}
+          AUTOMAS_FILE_ID: ${{ vars.AUTOMAS_CULTIVATE_FILE_ID }}
+          AUTOMAS_PUBLIC_URL: ${{ vars.AUTOMAS_CULTIVATE_PUBLIC_URL }}
+        run: uv run --no-sync python -m copilot_data publish --dataset cultivate
