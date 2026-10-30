@@ -52,11 +52,11 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 | 类型 | 名称 | 含义 |
 | --- | --- | --- |
-| Secret | `AUTOMAS_TOKEN` | 沿用现有 Access Key，须有权上传并发布新的养成快照文件 |
+| Secret | `AUTOMAS_CULTIVATE_TOKEN` | 养成快照独立的 Access Key，仅授权上传并自动发布养成快照文件 |
 | Variable | `AUTOMAS_CULTIVATE_FILE_ID` | 新养成快照文件的数字 ID |
 | Variable | `AUTOMAS_CULTIVATE_PUBLIC_URL` | 新文件固定的 `https://data.auto-mas.top/api/v1/files/.../download` 公开地址 |
 
-工作流将这两个新变量映射为发布工具的 `AUTOMAS_FILE_ID` 和 `AUTOMAS_PUBLIC_URL`，复用上传、发布状态检查和公开回读校验。现有作业快照的三个配置保持原样。未配置新目标时上传步骤失败，完整生成结果仍保留在 `data` 分支，配置后可手动 `sync`。
+工作流将独立 Secret 和两个变量映射为发布工具的 `AUTOMAS_TOKEN`、`AUTOMAS_FILE_ID` 和 `AUTOMAS_PUBLIC_URL`，复用上传、发布状态检查和公开回读校验。养成工作流只读取 `AUTOMAS_CULTIVATE_TOKEN`，不回退使用作业快照的 `AUTOMAS_TOKEN`。未配置新目标或独立密钥时上传步骤失败，完整生成结果仍保留在 `data` 分支，配置后可手动 `sync`。
 
 本地生成及校验（不上传、不推送）：
 

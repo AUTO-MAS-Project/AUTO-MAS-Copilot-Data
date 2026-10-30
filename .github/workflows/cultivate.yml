@@ -71,7 +71,7 @@ jobs:
         run: uv run --no-sync python -m copilot_data save --dataset cultivate
       - name: 上传并回读下载站
         env:
-          AUTOMAS_TOKEN: ${{ secrets.AUTOMAS_TOKEN }}
+          AUTOMAS_TOKEN: ${{ secrets.AUTOMAS_CULTIVATE_TOKEN }}
           AUTOMAS_FILE_ID: ${{ vars.AUTOMAS_CULTIVATE_FILE_ID }}
           AUTOMAS_PUBLIC_URL: ${{ vars.AUTOMAS_CULTIVATE_PUBLIC_URL }}
         run: uv run --no-sync python -m copilot_data publish --dataset cultivate
