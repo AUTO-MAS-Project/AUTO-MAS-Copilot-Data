@@ -2,8 +2,8 @@ name: 更新养成快照并上传下载站
 
 on:
   schedule:
-    # 干员目录现有保鲜期为一小时；避开每日作业快照的执行时间。
-    - cron: '37 * * * *'
+    # 每天北京时间 05:17，与作业快照一致。
+    - cron: '17 21 * * *'
   workflow_dispatch:
     inputs:
       operation:

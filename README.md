@@ -25,7 +25,7 @@ gh workflow run update.yml --repo AUTO-MAS-Project/AUTO-MAS-Copilot-Data --ref d
 
 ## 一图流养成快照
 
-独立工作流 **Actions → 更新养成快照并上传下载站** 每小时第 **37 分钟**运行，也支持 `operation=update` 和 `operation=sync`。GitHub 定时任务可能排队延迟。两类工作流共用并发组，串行更新 `data` 分支，各自保存时保留另一类快照。
+独立工作流 **Actions → 更新养成快照并上传下载站** 每天北京时间 **05:17** 运行，与作业快照保持一致，也支持 `operation=update` 和 `operation=sync`。GitHub 定时任务可能排队延迟。两类工作流共用并发组，串行更新 `data` 分支，各自保存时保留另一类快照。
 
 `update` 完整读取干员需求表、掉落矩阵、关卡信息、合成配方和材料信息，按 MAS 的现有规则整理后生成一个 UTF-8 JSON 文件，而不是将五份源文件打包。干员目录从本轮同一份需求表生成；任何源失败、为空或结果缺少完整材料数据/目录时，不生成新快照，也不发布半成品。`sync` 只重传 `data` 分支已保存的完整文件，不修改其生成时间。
 
