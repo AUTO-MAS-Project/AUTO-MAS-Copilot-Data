@@ -6,4 +6,5 @@ maa-copilot.json.gz
 manifest.json
 .data-parent
 cultivate_dataset.json
+cultivate_dataset.json.gz
 cultivate_manifest.json

@@ -64,9 +64,6 @@ def upload(
     url = UPLOAD_BASE + upload_path
     with tempfile.TemporaryDirectory(prefix="copilot-publish-") as directory:
         source = Path(directory) / filename
-        content_type = (
-            "application/json" if source.suffix == ".json" else "application/gzip"
-        )
         response = Path(directory) / "response.json"
         headers = Path(directory) / "headers.txt"
         cookies = Path(directory) / "cookies.txt"
@@ -90,7 +87,7 @@ def upload(
                 "--config",
                 "-",
                 "--form",
-                f"file=@{source};type={content_type}",
+                f"file=@{source};type=application/gzip",
                 "--form-string",
                 f"change_note=GitHub Actions run {os.environ.get('GITHUB_RUN_ID', 'manual')}",
                 "--cookie",

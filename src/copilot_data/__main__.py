@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import gzip
 import hashlib
 import json
 import os
@@ -17,7 +18,7 @@ from .source import SNAPSHOT_VERSION, fetch_assignments, read_snapshot, write_sn
 BRANCH = "refs/heads/data"
 FILES = {
     "copilot": (Path("maa-copilot.json.gz"), Path("manifest.json")),
-    "cultivate": (Path("cultivate_dataset.json"), Path("cultivate_manifest.json")),
+    "cultivate": (Path("cultivate_dataset.json.gz"), Path("cultivate_manifest.json")),
 }
 PARENT = Path(".data-parent")
 
@@ -100,9 +101,13 @@ async def build(dataset: str = "copilot") -> None:
 
         snapshot = await build_snapshot()
         temporary = path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(snapshot, ensure_ascii=False, allow_nan=False, indent=2) + "\n",
-            encoding="utf-8",
+        temporary.write_bytes(
+            gzip.compress(
+                json.dumps(
+                    snapshot, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+                ).encode(),
+                mtime=0,
+            )
         )
         temporary.replace(path)
     else:

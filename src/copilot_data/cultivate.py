@@ -1,9 +1,11 @@
-"""生成 MAS 可直接读取的完整一图流养成快照。"""
+"""生成完整一图流养成快照，解压后的 JSON 沿用 MAS 缓存结构。"""
 
 import asyncio
+import gzip
 import json
 import math
 import time
+import zlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,8 +28,16 @@ SOURCE_URLS = (_DEMAND_URL, _MATRIX_URL, _STAGE_INFO_URL, _RECIPE_URL, _ITEM_INF
 
 
 def read_snapshot(content: bytes) -> dict[str, Any]:
+    """读取并验证 gzip 快照，不接受明文 JSON 或损坏的压缩数据。"""
+    try:
+        decoded = gzip.decompress(content)
+    except (OSError, EOFError, zlib.error) as exc:
+        raise ValueError("养成快照压缩数据损坏，请重新生成") from exc
+    return _validate_snapshot(json.loads(decoded))
+
+
+def _validate_snapshot(payload: Any) -> dict[str, Any]:
     """验证材料数据与干员目录同时完整，不接受客户端的局部缓存。"""
-    payload = json.loads(content)
     if not isinstance(payload, dict):
         raise ValueError("养成快照根节点必须是对象")
     for key in ("saved_at", "operators_saved_at"):
@@ -164,5 +174,4 @@ async def build_snapshot() -> dict[str, Any]:
         "operators": parse_operator_catalog(demand),
         "operators_saved_at": stamp,
     }
-    read_snapshot(json.dumps(payload, allow_nan=False).encode())
-    return payload
+    return _validate_snapshot(payload)

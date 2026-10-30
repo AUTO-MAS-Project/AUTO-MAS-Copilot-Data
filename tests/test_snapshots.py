@@ -1,6 +1,8 @@
 """完整养成契约、两类快照共存和上传格式的回归验证。"""
 
 import copy
+import gzip
+import hashlib
 import json
 import os
 import subprocess
@@ -99,7 +101,7 @@ def snapshot():
 def write_cultivate():
     path, manifest_path = cli.FILES["cultivate"]
     payload = snapshot()
-    content = json.dumps(payload, ensure_ascii=False).encode()
+    content = gzip.compress(json.dumps(payload, ensure_ascii=False).encode(), mtime=0)
     path.write_bytes(content)
     manifest_path.write_text(
         json.dumps(cli.manifest_for("cultivate", payload, content)), encoding="utf-8"
@@ -163,9 +165,50 @@ class CultivateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("wk_melee_6", dataset.stages)
         self.assertEqual(dataset.material_class["4001"], "farmable")
         self.assertEqual(
-            cultivate.read_snapshot(json.dumps(result).encode()),
+            cultivate.read_snapshot(
+                gzip.compress(json.dumps(result).encode(), mtime=0)
+            ),
             json.loads(json.dumps(result)),
         )
+
+    async def test_build_writes_reproducible_gzip_and_hashes_compressed_bytes(self):
+        payload = snapshot()
+        with tempfile.TemporaryDirectory() as directory, working_directory(directory):
+            with (
+                patch.object(
+                    cultivate, "build_snapshot", new=AsyncMock(return_value=payload)
+                ),
+                patch("builtins.print"),
+            ):
+                await cli.build("cultivate")
+                path, manifest_path = cli.FILES["cultivate"]
+                content = path.read_bytes()
+                self.assertEqual(
+                    json.loads(gzip.decompress(content)),
+                    json.loads(json.dumps(payload)),
+                )
+                self.assertEqual(
+                    cli.validate("cultivate"), json.loads(json.dumps(payload))
+                )
+                manifest = json.loads(manifest_path.read_bytes())
+                self.assertEqual(
+                    manifest["sha256"], hashlib.sha256(content).hexdigest()
+                )
+                self.assertFalse(Path("cultivate_dataset.json").exists())
+                await cli.build("cultivate")
+                self.assertEqual(path.read_bytes(), content)
+
+    def test_plain_json_and_damaged_gzip_are_rejected(self):
+        plain = json.dumps(snapshot()).encode()
+        compressed = gzip.compress(plain, mtime=0)
+        corrupted = bytearray(compressed)
+        corrupted[-8] ^= 1
+        for content in (plain, compressed[:12], bytes(corrupted)):
+            with (
+                self.subTest(content=content[:12]),
+                self.assertRaisesRegex(ValueError, "压缩数据损坏"),
+            ):
+                cultivate.read_snapshot(content)
 
     async def test_empty_source_does_not_replace_last_complete_snapshot(self):
         responses = dict(zip(cultivate.SOURCE_URLS, source_data()))
@@ -183,7 +226,7 @@ class CultivateTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.assertRaises(ValueError):
                     await cli.build("cultivate")
-            self.assertEqual(Path("cultivate_dataset.json").read_bytes(), previous)
+            self.assertEqual(Path("cultivate_dataset.json.gz").read_bytes(), previous)
             cli.validate("cultivate")
 
     async def test_invalid_source_rows_do_not_replace_last_complete_snapshot(self):
@@ -216,7 +259,7 @@ class CultivateTests(unittest.IsolatedAsyncioTestCase):
                         with self.assertRaises(ValueError):
                             await cli.build("cultivate")
                     self.assertEqual(
-                        Path("cultivate_dataset.json").read_bytes(), previous
+                        Path("cultivate_dataset.json.gz").read_bytes(), previous
                     )
                     self.assertEqual(
                         Path("cultivate_manifest.json").read_bytes(), manifest
@@ -237,7 +280,9 @@ class CultivateTests(unittest.IsolatedAsyncioTestCase):
             value = snapshot()
             change(value)
             with self.subTest(value=value), self.assertRaises(ValueError):
-                cultivate.read_snapshot(json.dumps(value).encode())
+                cultivate.read_snapshot(
+                    gzip.compress(json.dumps(value).encode(), mtime=0)
+                )
 
 
 class DataBranchTests(unittest.TestCase):
@@ -246,8 +291,8 @@ class DataBranchTests(unittest.TestCase):
             write_cultivate()
             value = snapshot()
             value["operators"][0]["label"] = "被修改的目录"
-            Path("cultivate_dataset.json").write_text(
-                json.dumps(value), encoding="utf-8"
+            Path("cultivate_dataset.json.gz").write_bytes(
+                gzip.compress(json.dumps(value).encode(), mtime=0)
             )
             with self.assertRaisesRegex(ValueError, "清单校验失败"):
                 cli.validate("cultivate")
@@ -283,13 +328,13 @@ class DataBranchTests(unittest.TestCase):
                 parent = cli.PARENT.read_text().strip()
                 self.assertEqual(
                     subprocess.check_output(
-                        ["git", "show", f"{parent}:cultivate_dataset.json"]
+                        ["git", "show", f"{parent}:cultivate_dataset.json.gz"]
                     ),
                     complete_cultivate,
                 )
                 cli.load(required=True, dataset="cultivate")
                 self.assertEqual(
-                    Path("cultivate_dataset.json").read_bytes(), complete_cultivate
+                    Path("cultivate_dataset.json.gz").read_bytes(), complete_cultivate
                 )
                 self.assertEqual(cli.validate("cultivate")["saved_at"], 1700000000)
 
@@ -309,16 +354,18 @@ class DataBranchTests(unittest.TestCase):
                 write_copilot()
                 cli.save()
                 write_cultivate()
-                with self.assertRaisesRegex(ValueError, "尚无 cultivate_dataset.json"):
+                with self.assertRaisesRegex(
+                    ValueError, "尚无 cultivate_dataset.json.gz"
+                ):
                     cli.load(required=True, dataset="cultivate")
-                self.assertFalse(Path("cultivate_dataset.json").exists())
+                self.assertFalse(Path("cultivate_dataset.json.gz").exists())
 
 
 class UploadTests(unittest.TestCase):
     def test_original_filename_and_mime_type_reach_upload(self):
         for filename, mime in (
             ("maa-copilot.json.gz", "application/gzip"),
-            ("cultivate_dataset.json", "application/json"),
+            ("cultivate_dataset.json.gz", "application/gzip"),
         ):
 
             def execute(command, **kwargs):
@@ -343,7 +390,7 @@ class UploadTests(unittest.TestCase):
 
 
 class PublishTests(unittest.IsolatedAsyncioTestCase):
-    async def test_publish_forwards_json_filename_and_checks_public_content(self):
+    async def test_publish_forwards_gzip_filename_and_checks_public_content(self):
         public_url = (
             "https://data.auto-mas.top/api/v1/files/auto-mas/Client/cultivate/download"
         )
@@ -355,7 +402,7 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
             "published_version_no": 1,
         }
         with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "cultivate_dataset.json"
+            source = Path(directory) / "cultivate_dataset.json.gz"
             source.write_bytes(b"test snapshot")
             with (
                 patch.object(
@@ -370,7 +417,10 @@ class PublishTests(unittest.IsolatedAsyncioTestCase):
             ):
                 await publisher.publish(source)
                 upload_mock.assert_called_once_with(
-                    7, "test-key", b"test snapshot", filename="cultivate_dataset.json"
+                    7,
+                    "test-key",
+                    b"test snapshot",
+                    filename="cultivate_dataset.json.gz",
                 )
                 self.assertEqual(matches.await_count, 2)
 
