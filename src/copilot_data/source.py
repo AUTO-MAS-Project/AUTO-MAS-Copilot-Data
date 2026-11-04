@@ -216,29 +216,48 @@ async def fetch_assignments(
     elif scope == "copilot":
         params["copilotIds"] = query
 
-    data = await request_data(client, "/copilot/query", page=1, **params)
-    total = int(data["total"])
-    entries = {int(item["id"]): normalize_assignment(item) for item in data["data"]}
-    if progress:
-        progress(len(entries), total)
-    # 三页一组，限制并发；ID 去重消除拉取期间新增作业导致的翻页重叠。
-    last_page = math.ceil(total / PAGE_SIZE)
-    for page in range(2, last_page + 1, 3):
-        pages = await asyncio.gather(
-            *(
-                request_data(client, "/copilot/query", page=i, **params)
-                for i in range(page, min(page + 3, last_page + 1))
-            )
+    if scope == "copilot":
+        data = await request_data(client, "/copilot/query", page=1, **params)
+        return await attach_module_orders(
+            client, [normalize_assignment(item) for item in data["data"]]
         )
-        for result in pages:
-            for item in result["data"]:
-                entries[int(item["id"])] = normalize_assignment(item)
-        if progress:
-            progress(len(entries), total)
-        await asyncio.sleep(0.15)
-    return await attach_module_orders(
-        client, sorted(entries.values(), key=lambda item: item["id"], reverse=True)
-    )
+
+    # 先记录最新编号与总数，再正序翻页。之后的新投稿不会挤动已有页面。
+    # 删除等变化仍可能令 offset 跳行，完整性不符时重试，绝不返回半份数据。
+    for attempt in range(3):
+        anchor = await request_data(client, "/copilot/query", page=1, **params)
+        total = int(anchor["total"])
+        if not total and not anchor["data"]:
+            return []
+        anchor_ids = {int(item["id"]) for item in anchor["data"]}
+        if total < 1 or not anchor_ids:
+            raise ValueError("作业站分页数据不完整，请稍后重试")
+        upper_id = max(anchor_ids)
+        ascending = {**params, "desc": False}
+        entries: dict[int, dict[str, Any]] = {}
+        last_page = math.ceil(total / PAGE_SIZE)
+        for page in range(1, last_page + 1, 3):
+            pages = await asyncio.gather(
+                *(
+                    request_data(client, "/copilot/query", page=i, **ascending)
+                    for i in range(page, min(page + 3, last_page + 1))
+                )
+            )
+            for result in pages:
+                for item in result["data"]:
+                    if int(item["id"]) <= upper_id:
+                        entries[int(item["id"])] = normalize_assignment(item)
+            if progress:
+                progress(len(entries), total)
+            await asyncio.sleep(0.15)
+        if len(entries) == total and anchor_ids <= entries.keys():
+            return await attach_module_orders(
+                client,
+                sorted(entries.values(), key=lambda item: item["id"], reverse=True),
+            )
+        if attempt < 2:
+            await asyncio.sleep(2**attempt)
+    raise ValueError("作业站分页发生变化或数据不完整，请重新同步；已有缓存未覆盖")
 
 
 def read_snapshot(content: bytes) -> dict[str, Any]:
