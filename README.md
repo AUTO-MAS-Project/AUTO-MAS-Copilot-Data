@@ -135,7 +135,7 @@ uv run --no-sync python -m copilot_data build
 | Variable | `MAAEND_DELTA_X64_BETA_FILE_ID` | x64 公测版文件数字 ID |
 | Variable | `MAAEND_DELTA_ARM64_BETA_FILE_ID` | arm64 公测版文件数字 ID |
 
-每个目标只发布最近一次指定的版本对。选择优先增量后，客户端保留上次经 MAS 成功安装、官方 SHA256
+每个目标只发布最近一次指定的版本对。选择增量更新后，客户端保留上次经 MAS 成功安装、官方 SHA256
 校验通过的原始 ZIP；首次无缓存或落后于已发布版本对时使用全量，并建立新缓存。
 客户端从 GitHub 独立读取目标整包大小与 SHA256，站点清单不能改写校验依据。
 完整 ZIP 重建校验后仍交给 MAS 现有的可恢复安装器，包含原有用户文件保护和安装回执。
