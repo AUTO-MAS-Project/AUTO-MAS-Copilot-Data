@@ -5,7 +5,9 @@ import json
 import struct
 import threading
 import zipfile
+from bisect import bisect_right
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import BinaryIO
 
 MAX_PATCH_BYTES = 32 * 1024**2
@@ -106,11 +108,20 @@ def apply_patch(
         if info.file_size > 16 * 1024**2:
             raise ValueError("增量清单过大")
         metadata = json.loads(archive.read(info))
+        actual_base = file_digest(baseline)
+        bundle = metadata.get("version") == 2
+        if bundle:
+            metadata = {
+                **metadata,
+                "version": 1,
+                "base_sha256": actual_base,
+                "operations": metadata["plans"][actual_base],
+            }
         if (
             metadata.get("version") != 1
             or metadata.get("target_size") != size
             or metadata.get("target_sha256") != digest
-            or metadata.get("base_sha256") != file_digest(baseline)
+            or metadata.get("base_sha256") != actual_base
         ):
             raise ValueError("增量包与官方版本或本地基线不一致")
         operations = metadata["operations"]
@@ -130,7 +141,10 @@ def apply_patch(
                     ):
                         raise ValueError("增量重建区间无效")
                     source = old if kind == "old" else payload
-                    if kind == "new" and offset != payload.tell():
+                    if kind == "new" and (
+                        offset < payload.tell()
+                        or (not bundle and offset != payload.tell())
+                    ):
                         raise ValueError("增量数据顺序无效")
                     source.seek(offset)
                     remaining = length
@@ -145,6 +159,87 @@ def apply_patch(
                     written += length
     if destination.stat().st_size != size or file_digest(destination) != digest:
         raise ValueError("重建包未通过官方 SHA256 校验")
+
+
+def create_bundle(
+    baselines: list[Path], target: Path, patch: Path, policy: dict
+) -> None:
+    """最多三个正式起点共享一份目标字节池；beta 只生成同号正式基准的累计包。"""
+    plans = {}
+    intervals = []
+    with TemporaryDirectory() as scratch:
+        for number, baseline in enumerate(baselines):
+            single = Path(scratch) / f"{number}.zip"
+            create_patch(baseline, target, single)
+            with zipfile.ZipFile(single) as archive:
+                metadata = json.loads(archive.read("manifest.json"))
+            cursor = 0
+            operations = []
+            for kind, offset, length in metadata["operations"]:
+                if kind == "new":
+                    offset = cursor
+                    intervals.append((cursor, cursor + length))
+                operations.append([kind, offset, length])
+                cursor += length
+            plans[metadata["base_sha256"]] = operations
+    merged = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(end, merged[-1][1])
+        else:
+            merged.append([start, end])
+    starts = [start for start, _ in merged]
+    positions = []
+    position = 0
+    for start, end in merged:
+        positions.append(position)
+        position += end - start
+    for operations in plans.values():
+        for operation in operations:
+            if operation[0] == "new":
+                index = bisect_right(starts, operation[1]) - 1
+                operation[1] = positions[index] + operation[1] - starts[index]
+    metadata = {
+        **policy,
+        "version": 2,
+        "mode": "range-zip",
+        "plans": plans,
+        "target_size": target.stat().st_size,
+        "target_sha256": file_digest(target),
+    }
+    document = json.dumps(metadata).encode()
+    if len(document) > 512 * 1024:
+        raise ValueError("多基线清单超过客户端限制")
+    with (
+        target.open("rb") as source,
+        zipfile.ZipFile(patch, "w", compression=zipfile.ZIP_DEFLATED) as archive,
+    ):
+        with archive.open("payload", "w", force_zip64=True) as payload:
+            for start, end in merged:
+                source.seek(start)
+                remaining = end - start
+                while remaining:
+                    chunk = source.read(min(remaining, 1024 * 1024))
+                    if not chunk:
+                        raise ValueError("目标归档不完整")
+                    payload.write(chunk)
+                    remaining -= len(chunk)
+        info = zipfile.ZipInfo("manifest.json")
+        info.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(info, document)
+    if patch.stat().st_size >= min(MAX_PATCH_BYTES, target.stat().st_size):
+        patch.unlink()
+        raise ValueError("多基线增量过大，使用全量")
+    with TemporaryDirectory() as scratch:
+        for number, baseline in enumerate(baselines):
+            apply_patch(
+                baseline,
+                patch,
+                Path(scratch) / f"{number}.zip",
+                target.stat().st_size,
+                metadata["target_sha256"],
+                threading.Event(),
+            )
 
 
 def _data_offset(stream: BinaryIO, item: zipfile.ZipInfo) -> int:

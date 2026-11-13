@@ -1,11 +1,10 @@
-"""下载官方两版 ZIP、生成字节增量并独立重建验证；不运行 MaaEnd。"""
+"""自动选取正式基准，下载官方 ZIP、合并增量并逐基准验证；不运行 MaaEnd。"""
 
 import argparse
 import hashlib
 import json
 import os
 import re
-import threading
 from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -46,32 +45,108 @@ def download_release(tag: str, arch: str, destination: Path) -> tuple[int, str]:
     return size, digest[7:]
 
 
+def release_version(tag: str) -> tuple[tuple[int, int, int], str, int]:
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?", tag)
+    if not match:
+        raise ValueError("无法识别官方版本标签")
+    return tuple(map(int, match.group(1, 2, 3))), match[4] or "", int(match[5] or 0)
+
+
+def release_catalog() -> list[dict]:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "AUTO-MAS-delta"}
+    if token := os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    releases = []
+    for page in range(1, 21):
+        with urlopen(
+            Request(
+                f"https://api.github.com/repos/MaaEnd/MaaEnd/releases?per_page=100&page={page}",
+                headers=headers,
+            ),
+            timeout=30,
+        ) as response:
+            batch = json.load(response)
+        if not isinstance(batch, list):
+            raise ValueError("官方发行记录不是列表")
+        for item in batch:
+            if item.get("draft"):
+                continue
+            try:
+                release_version(item["tag_name"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            releases.append(item)
+        if len(batch) < 100:
+            return releases
+    raise ValueError("官方发行记录分页超限")
+
+
+def select_bases(releases: list[dict], target_tag: str, channel: str) -> list[str]:
+    target, kind, _ = release_version(target_tag)
+    stable = {
+        release_version(item["tag_name"])[0]: item["tag_name"]
+        for item in releases
+        if not item.get("draft")
+        and not item.get("prerelease")
+        and not release_version(item["tag_name"])[1]
+    }
+    if channel == "stable":
+        if kind:
+            raise ValueError("正式通道不能发布 beta 目标")
+        return [
+            stable[value] for value in sorted(stable, reverse=True) if value < target
+        ][:3]
+    if not kind:
+        raise ValueError("beta 通道必须指定 beta/rc 目标")
+    return [stable[target]] if target in stable else []
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-tag", required=True)
-    parser.add_argument("--target-tag", required=True)
+    parser.add_argument("--target-tag", default="")
+    parser.add_argument("--channel", choices=["stable", "beta"], required=True)
     parser.add_argument("--arch", choices=["x86_64", "aarch64"], required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.base_tag == args.target_tag:
-        raise ValueError("起始和目标版本不能相同")
-    from .zip_delta import apply_patch, create_patch
+    releases = release_catalog()
+    if not args.target_tag:
+        candidates = [
+            item
+            for item in releases
+            if bool(release_version(item["tag_name"])[1]) == (args.channel == "beta")
+        ]
+        if not candidates:
+            raise ValueError("通道没有可识别的发行版")
+        args.target_tag = max(
+            candidates, key=lambda item: release_version(item["tag_name"])
+        )["tag_name"]
+    bases = select_bases(releases, args.target_tag, args.channel)
+    from .zip_delta import create_bundle
+    from tempfile import TemporaryDirectory
 
     args.output.mkdir(parents=True, exist_ok=True)
-    baseline, target, rebuilt = (
-        args.output / name for name in ("base.zip", "target.zip", "rebuilt.zip")
-    )
-    download_release(args.base_tag, args.arch, baseline)
-    size, digest = download_release(args.target_tag, args.arch, target)
-    patch = args.output / "maaend.delta.zip"
-    create_patch(baseline, target, patch)
-    apply_patch(baseline, patch, rebuilt, size, digest, threading.Event())
-    print(
-        f"{args.base_tag} -> {args.target_tag} ({args.arch}): "
-        f"增量 {patch.stat().st_size} / 全量 {size} 字节，重建 SHA256 校验通过"
-    )
-    for path in (baseline, target, rebuilt):
-        path.unlink()
+    with TemporaryDirectory(dir=args.output) as scratch:
+        target = Path(scratch) / "target.zip"
+        size, digest = download_release(args.target_tag, args.arch, target)
+        archives = []
+        for number, tag in enumerate(bases):
+            archive = Path(scratch) / f"base-{number}.zip"
+            download_release(tag, args.arch, archive)
+            archives.append(archive)
+        policy = {
+            "channel": args.channel,
+            "arch": args.arch,
+            "target_version": args.target_tag,
+            "target_size": size,
+            "target_sha256": digest,
+            "bases": bases,
+            "beta_base": bases[0] if args.channel == "beta" and bases else None,
+        }
+        patch = args.output / "maaend.delta.zip"
+        create_bundle(archives, target, patch, policy)
+        print(
+            f"{bases} -> {args.target_tag} ({args.arch}): {patch.stat().st_size} bytes; all plans verified"
+        )
 
 
 if __name__ == "__main__":

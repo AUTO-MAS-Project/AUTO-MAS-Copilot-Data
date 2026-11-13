@@ -3,13 +3,9 @@ name: 生成 MaaEnd 增量包并上传下载站
 on:
   workflow_dispatch:
     inputs:
-      base_tag:
-        description: 起始官方版本（如 v2.31.0）
-        required: true
-        type: string
       target_tag:
-        description: 目标官方版本（如 v3.0.0）
-        required: true
+        description: 目标官方版本（留空自动选择该通道最新版）
+        required: false
         type: string
       arch:
         description: 安装架构
@@ -44,13 +40,13 @@ jobs:
           python-version: '3.12'
       - name: 下载官方包并生成、校验增量
         env:
-          BASE_TAG: ${{ inputs.base_tag }}
+          CHANNEL: ${{ inputs.channel }}
           TARGET_TAG: ${{ inputs.target_tag }}
           ARCH: ${{ inputs.arch == 'x64' && 'x86_64' || 'aarch64' }}
           GITHUB_TOKEN: ${{ github.token }}
           PYTHONPATH: src
         run: >-
-          python -m copilot_data.maaend_delta --base-tag "$BASE_TAG"
+          python -m copilot_data.maaend_delta --channel "$CHANNEL"
           --target-tag "$TARGET_TAG" --arch "$ARCH" --output .delta-output
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
