@@ -108,3 +108,37 @@ uv run --no-sync python -m copilot_data build
 ```
 
 许可证：AGPL-3.0-or-later。作业内容及其权利归原作者所有。
+
+## MaaEnd 增量包
+
+配合 AUTO-MAS 主程序 PR #1949，独立工作流 **生成 MaaEnd 增量包并上传下载站**
+在本仓库的 `dev` 手动运行。输入起始和目标官方标签、架构（`x64` / `arm64`）以及通道
+（`stable` / `beta`）。它下载两版官方 Windows ZIP，分别核对 GitHub Release 公布的
+大小及 SHA256，复用旧 ZIP 中未变的压缩字节，生成增量并在发布前重建验证。
+不运行 MaaEnd，不解释其资源、任务或上游私有增量清单。
+
+增量产物先保留为 7 天的 Actions artifact，再复用本仓库 `publish.py` 上传与公开回读校验。
+生成失败、增量不小于全量、超过当前发布工具的 32 MiB 上限、凭据缺失或未发布时，
+工作流报错，不替换已发布文件；客户端遇到基线或目标不匹配就回退官方全量包。
+重新执行同样输入可重试生成与上传。
+
+在下载站 AUTO-MAS → Client 创建独立文件，键为
+`maaend-{arch}-{channel}-delta`。例如 x64 稳定版公开地址必须是
+`https://data.auto-mas.top/api/v1/files/auto-mas/Client/maaend-x64-stable-delta/download`。
+不要使用作业或养成快照的文件 ID 和密钥。
+
+| 类型 | 名称 | 含义 |
+| --- | --- | --- |
+| Secret | `AUTOMAS_MAAEND_DELTA_TOKEN` | 仅授权 MaaEnd 增量文件上传与自动发布的 Access Key |
+| Variable | `MAAEND_DELTA_X64_STABLE_FILE_ID` | x64 稳定版文件数字 ID |
+| Variable | `MAAEND_DELTA_ARM64_STABLE_FILE_ID` | arm64 稳定版文件数字 ID |
+| Variable | `MAAEND_DELTA_X64_BETA_FILE_ID` | x64 公测版文件数字 ID |
+| Variable | `MAAEND_DELTA_ARM64_BETA_FILE_ID` | arm64 公测版文件数字 ID |
+
+每个目标只发布最近一次指定的版本对。选择优先增量后，客户端保留上次经 MAS 成功安装、官方 SHA256
+校验通过的原始 ZIP；首次无缓存或落后于已发布版本对时使用全量，并建立新缓存。
+客户端从 GitHub 独立读取目标整包大小与 SHA256，站点清单不能改写校验依据。
+完整 ZIP 重建校验后仍交给 MAS 现有的可恢复安装器，包含原有用户文件保护和安装回执。
+
+字节协议为 v1，`zip_delta.py` 与主程序同名模块共同维护；修改协议时必须同时验证
+生成端与客户端，不能只用生成端自己的重建结果证明客户端兼容。
