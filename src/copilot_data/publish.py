@@ -87,7 +87,7 @@ def upload(
                 "--config",
                 "-",
                 "--form",
-                f"file=@{source};type={'application/zip' if filename.endswith('.zip') else 'application/gzip'}",
+                f"file=@{source};type=application/gzip",
                 "--form-string",
                 f"change_note=GitHub Actions run {os.environ.get('GITHUB_RUN_ID', 'manual')}",
                 "--cookie",

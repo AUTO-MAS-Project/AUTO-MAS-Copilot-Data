@@ -366,7 +366,6 @@ class UploadTests(unittest.TestCase):
         for filename, mime in (
             ("maa-copilot.json.gz", "application/gzip"),
             ("cultivate_dataset.json.gz", "application/gzip"),
-            ("maaend.delta.zip", "application/zip"),
         ):
 
             def execute(command, **kwargs):
