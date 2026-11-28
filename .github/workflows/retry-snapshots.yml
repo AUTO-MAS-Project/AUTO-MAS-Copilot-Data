@@ -1,0 +1,41 @@
+name: 重跑失败的定时快照
+
+on:
+  workflow_run:
+    workflows:
+      - 更新作业快照并上传下载站
+      - 更新养成快照并上传下载站
+    types: [completed]
+    branches: [dev]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    if: >-
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: snapshot-retry-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    steps:
+      - name: 等待并重跑失败的任务
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SNAPSHOT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          sleep 120
+          # 等待期间可能已有维护者重跑，提交请求前读取最新状态。
+          should_retry=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SNAPSHOT_RUN_ID" \
+            --jq '.status == "completed" and .conclusion == "failure" and .run_attempt == 1')
+          if [[ "$should_retry" == true ]]; then
+            gh run rerun "$SNAPSHOT_RUN_ID" --failed --repo "$GITHUB_REPOSITORY"
+          else
+            echo "快照任务状态已变化，跳过自动重跑。"
+          fi
